@@ -1,4 +1,17 @@
-/**
+
+import android.app.ActivityManager;
+import android.content.ComponentName;
+import android.content.Context;
+import android.util.Log;
+
+import androidx.lifecycle.Lifecycle;
+import androidx.lifecycle.LifecycleEventObserver;
+import androidx.lifecycle.ProcessLifecycleOwner;
+
+import java.util.List;
+import java.util.Objects;
+
+**
  * A utility class to determine the current state of an Android application.
  * The state can be one of the following: FOREGROUND, BACKGROUND, or TERMINATED.
  */
