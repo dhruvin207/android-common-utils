@@ -1,0 +1,102 @@
+name: Build And Deploy
+description: "This Action will collect details and triggered the fastlane to build and deploy app."
+
+runs:
+  using: "composite"
+  steps:
+    - name: 🔨 Build App.
+      shell: bash
+      run: |
+        bundle exec fastlane build
+
+    - name: 📂 Create a zip file for Native Symbols.
+      shell: bash
+      run: |
+        cd my-app/build/intermediates/merged_native_libs/my-app/mergeAppNativeLibs/out/lib/
+        zip -r symbols.zip *
+        echo "RUC_APP_SYMBOLS_FILE_PATH=my-app/build/intermediates/merged_native_libs/my-app/mergeAppNativeLibs/out/lib/symbols.zip" >> "$GITHUB_ENV"
+        echo "RUC_APP_MAPPING_FILE_PATH=my-app/build/outputs/mapping/release/mapping.txt" >> "$GITHUB_ENV"
+        pwd
+        ls -la
+
+    - name: 📝 Extract Build Info.
+      shell: bash
+      run: |
+        # Check if it's an AAB file and use bundletool to extract package information
+        if [[ -e "${{ env.BUILD_PATH }}" && "${{ env.BUILD_PATH }}" == *".aab" ]]; then
+          APPLICATION_ID=$(java -jar bundletool.jar dump manifest --bundle="${{ env.BUILD_PATH }}" | grep -o 'package=\"[^\"]*\"' | awk -F\" '{print $2}')
+          echo "Application ID: $APPLICATION_ID"
+          echo "APP_PACKAGE_ID=$APPLICATION_ID" >> "$GITHUB_ENV"
+          # Extract version name from AAB (if available)
+          VERSION_NAME=$(java -jar bundletool.jar dump manifest --bundle="${{ env.BUILD_PATH }}" | grep -o 'versionName=\"[^\"]*\"' | awk -F\" '{print $2}')
+          echo "Version Name: $VERSION_NAME"
+          echo "APP_VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+
+          # Extract the base APK from the AAB file
+          java -jar bundletool.jar build-apks --bundle="${{ env.BUILD_PATH }}" --output="${{ env.FLAVOR }}.apks" --mode=universal
+          unzip -o "${{ env.FLAVOR }}.apks" -d output
+  
+          # Use aapt to get the application name from the base APK
+          APPLICATION_NAME=$(aapt dump badging output/universal.apk | awk -F"'" '/application-label:/ {for (i=2; i<=NF; i++) printf $i""; print ""}')
+          echo "Application Name: $APPLICATION_NAME"
+          echo "APP_NAME=$APPLICATION_NAME" >> "$GITHUB_ENV"
+
+        # If it's an APK file, use aapt to extract package information
+        elif [[ -e "${{ env.BUILD_PATH }}" && "${{ env.BUILD_PATH }}" == *".apk" ]]; then
+          package_id_info=$(aapt dump badging "${{ env.BUILD_PATH }}" | grep package:\ name)
+          package_id=$(echo "$package_id_info" | awk -F"'" '{print $2}')
+          echo "Application ID: $package_id"
+          echo "APP_PACKAGE_ID=$package_id" >> "$GITHUB_ENV"
+          # Extract version name from APK (if available)
+          VERSION_NAME=$(aapt dump badging "${{ env.BUILD_PATH }}" | awk '/versionName/ {print $4}' | sed s/versionName=//g | tr -d "'")
+          echo "Version Name: $VERSION_NAME"
+          echo "APP_VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+        
+          # Use aapt to get the application name from the base APK
+          APPLICATION_NAME=$(aapt dump badging "${{ env.BUILD_PATH }}" | awk -F"'" '/application-label:/ {for (i=2; i<=NF; i++) printf $i""; print ""}')
+          echo "Application Name: $APPLICATION_NAME"
+          echo "APP_NAME=$APPLICATION_NAME" >> "$GITHUB_ENV"
+        else
+          echo "Unsupported file format. Exiting."
+          exit 1
+        fi
+
+    - name: 📦 Upload ${{ env.APP_NAME }} Build to the Artifact.
+      uses: actions/upload-artifact@v4
+      with:
+        name: "${{ env.APP_NAME }}${{ env.ENVIRONMENT }}_v${{ env.APP_VERSION_NAME }}"
+        path: ${{ env.BUILD_PATH }}
+
+    - name: 🚀 Deploy ${{ env.APP_NAME }} App.
+      shell: bash
+      run: |
+        bundle exec fastlane deploy
+
+    - name: 🏷️ Create a Release Tag.
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        tag="${{ env.APP_NAME }}_v${{ env.APP_VERSION_NAME }}"
+        lowercaseTag=${tag,,} # convert to lowercase
+        finalTag=${lowercaseTag// /_} # replace spaces with underscores
+        gh release create $finalTag ${{ env.BUILD_PATH }} \
+              --repo="https://github.com/${{github.repository}}" \
+              --title="${{ env.APP_NAME }} v${{ env.APP_VERSION_NAME }}" \
+              --notes-file my-app/prod_release_note.md
+        gh release upload $finalTag ${{ env.APP_SYMBOLS_FILE_PATH }}
+        gh release upload $finalTag ${{ env.APP_MAPPING_FILE_PATH }}
+
+    - name: 🧹 Clean up resources.
+      shell: bash
+      run: |
+        # Clean up the generated file after usage
+        if [ -f "${{ github.workspace }}/keystore.jks" ]; then
+          rm -f ${{ github.workspace }}/keystore.jks
+        fi
+        if [ ! -z "${{ env.APP_SYMBOLS_FILE_PATH }}" ] && [ -f "${{ env.APP_SYMBOLS_FILE_PATH }}" ]; then
+          rm -f ${{ env.APP_SYMBOLS_FILE_PATH }}
+        fi
+        if [ ! -z "${{ env.APP_MAPPING_FILE_PATH }}" ] && [ -f "${{ env.APP_MAPPING_FILE_PATH }}" ]; then
+          rm -f ${{ env.APP_MAPPING_FILE_PATH }}
+        fi

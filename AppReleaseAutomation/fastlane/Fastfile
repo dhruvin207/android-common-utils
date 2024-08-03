@@ -1,0 +1,84 @@
+default_platform(:android)
+platform :android do
+  desc "🛠️ Streamlines app building."
+  lane :build do
+      environment = ENV['ENVIRONMENT']
+      keystore_file = "#{ENV['GITHUB_WORKSPACE']}/keystore.jks"
+      keystore_password = Base64.decode64(ENV['APP_KEYSTORE_PASSWORD_BASE64'])
+      keystore_alias = Base64.decode64(ENV['APP_KEYSTORE_ALIAS_BASE64'])
+      keystore_alias_password = Base64.decode64(ENV['APP_KEYSTORE_ALIAS_PASSWORD_BASE64'])
+      build_config = ((environment=="prod") ? "bundle" : "assemble")
+      artifact = ((environment=="prod") ? "AAB" : "APK")
+      # Capitalize the first letter of the environment
+      capitalized_environment = environment.capitalize
+      
+      gradle(
+        task: build_config,
+        build_type: "Release",
+        properties: {
+              "android.injected.signing.store.file" => keystore_file,
+              "android.injected.signing.store.password" => keystore_password,
+              "android.injected.signing.key.alias" => keystore_alias,
+              "android.injected.signing.key.password" => keystore_alias_password
+            }
+      )
+
+     if artifact == "APK"
+       build_path = lane_context[SharedValues::GRADLE_APK_OUTPUT_PATH]
+     elsif artifact == "AAB"
+       build_path = lane_context[SharedValues::GRADLE_AAB_OUTPUT_PATH]
+     end
+
+      UI.important("Generated build path => #{build_path}")
+      # Set the APK path as an environment variable for GitHub Actions
+      sh("echo chmod +x #{build_path}")
+      sh("echo BUILD_PATH=#{build_path} >> $GITHUB_ENV")
+  end
+
+  desc "🚀 Deploys the app to the specified environment."
+  lane :deploy do
+      environment = ((ENV["ENVIRONMENT"]!="") ? ENV["ENVIRONMENT"] : "")
+      apk_path = ((ENV["BUILD_PATH"]!="") ? ENV["BUILD_PATH"] : "blank")
+      artifact = ((ENV["ARTIFACT"]!="") ? ENV["ARTIFACT"] : "APK")
+      app_package_id = ((ENV["APP_PACKAGE_ID"]!="") ? ENV["APP_PACKAGE_ID"] : "blank")
+
+      service_cred_file_path = "#{ENV['GITHUB_WORKSPACE']}/service_cred.json"
+      symbol_file_path = ((ENV["APP_SYMBOLS_FILE_PATH"]!="") ? ENV["APP_SYMBOLS_FILE_PATH"] : "")
+      mapping_file_path = ((ENV["APP_MAPPING_FILE_PATH"]!="") ? ENV["APP_MAPPING_FILE_PATH"] : "")
+      dev_release_note_file = "#{ENV['DEV_RELEASE_NOTE_FILE']}"
+      firebase_app_id = ((ENV["APP_FIREBASE_APP_ID"]!="") ? ENV["APP_FIREBASE_APP_ID"] : "")
+      firebase_app_tester_group = ((ENV["APP_FIREBASE_APP_TESTER_GROUP"]!="") ? ENV["APP_FIREBASE_APP_TESTER_GROUP"] : "")
+
+      if service_cred_file_path.nil? || service_cred_file_path.empty?
+        UI.error("service_cred_file_path file is not accessible")
+      end
+
+      UI.header("Validate the google account credentials.....")
+      validate_play_store_json_key(
+        json_key: service_cred_file_path
+      )
+
+     if environment == "dev"
+      UI.header("🚀 Deploy to Firebase 🔥")
+           firebase_app_distribution(
+             app: firebase_app_id,
+             groups: firebase_app_tester_group,
+             service_credentials_file: service_cred_file_path,
+             release_notes_file: dev_release_note_file,
+             apk_path: apk_path,
+             android_artifact_type: artifact,
+             debug: true
+           )
+     elsif environment == "prod"
+      UI.header("🚀 Deploy to PlayStore Internal Testers 🛍️.")
+           upload_to_play_store(
+             json_key: service_cred_file_path,
+             package_name: ruc__app_package_id,
+             aab: apk_path,
+             track:'internal',
+             mapping_paths: [symbol_file_path, mapping_file_path],
+             release_status:'completed'
+           )
+     end
+  end
+end
