@@ -61,7 +61,7 @@ Finally, include the `flavor.gradle` file in your app-level `build.gradle` file,
 
 ```groovy
 // Flavor configuration
-apply from: "$rootProject.projectDir/geotoll-ruc-app/flavor.gradle"
+apply from: "$rootProject.projectDir/my-app/flavor.gradle"
 
 dependencies {
     // Your dependencies here
