@@ -1,0 +1,27 @@
+name: Reusable Flavor Action
+description: "This Action will build, upload and deploy the app."
+inputs:
+  flavor:
+    description: 'flavor name'
+    required: true
+    default: ''
+
+runs:
+  using: "composite"
+  steps:
+      - name:  🛠️ Set environment variables.
+        shell: bash
+        run: |
+          echo "FLAVOR="${{ inputs.flavor }}"" >> $GITHUB_ENV
+          echo "DEV_RELEASE_NOTE_FILE=${{ github.workspace }}/${{ env.PROJECT_NAME }}/dev_release_note.md" >> $GITHUB_ENV
+          ls -la
+          pwd
+
+      - name: ⚙️ Build Flavor App.
+        uses: ./.github/actions/build
+
+      - name: ⚙️ Upload Flavor App.
+        uses: ./.github/actions/upload
+
+      - name: 🚀 Deploy Flavor App.
+        uses: ./.github/actions/deploy

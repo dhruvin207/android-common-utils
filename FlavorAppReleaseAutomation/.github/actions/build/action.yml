@@ -1,0 +1,14 @@
+name: Build
+description: "This Action will collect details and triggered the fastlane to build the app."
+runs:
+  using: "composite"
+  steps:
+    - name: ✨ Action triggered for  ${{ env.FLAVOR }} App.
+      shell: bash
+      run: |
+        echo "Action triggered for ${{ env.FLAVOR }} flavor"
+
+    - name: 🔨 Build  ${{ env.FLAVOR }} App.
+      shell: bash
+      run: |
+        bundle exec fastlane build

@@ -1,0 +1,22 @@
+name: Flavor Selection
+description: "This Action will choose the flavor to build the app according to the variables."
+runs:
+  using: "composite"
+  steps:
+    - name: 🚀 Build FlavorA App
+      if: env.BUILD_AND_DEPLOY_FOR_FLAVORA == 'true'
+      uses: ./.github/actions/bud
+      with:
+        flavor: 'flavorA'
+
+    - name: 🚀 Build FlavorB App
+      if: env.BUILD_AND_DEPLOY_FOR_FLAVORB == 'true'
+      uses: ./.github/actions/bud
+      with:
+        flavor: 'flavorB'
+
+    - name: 🚀 Build FlavorC App
+      if: env.BUILD_AND_DEPLOY_FOR_FLAVORC == 'true'
+      uses: ./.github/actions/bud
+      with:
+        flavor: 'flavorC'

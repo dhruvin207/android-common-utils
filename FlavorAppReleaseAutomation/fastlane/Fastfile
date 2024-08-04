@@ -1,0 +1,173 @@
+default_platform(:android)
+platform :android do
+# fastlane build_deploy  artifact:"APK" variant:"Debug" flavor:"geotoll" project:"geotoll-ruc-app"
+  desc "🛠️ Streamlines app building with customizable configurations."
+  lane :build do
+      projectdir = ((ENV["GRADLEW_PATH"]!="") ? ENV["GRADLEW_PATH"] : "")
+      project = ((ENV["PROJECT"]!="") ? ENV["PROJECT"] : "")
+      environment = ((ENV["ENVIRONMENT"]!="") ? ENV["ENVIRONMENT"] : "")
+      flavor = ((ENV["FLAVOR"]!="") ? ENV["FLAVOR"] : "")
+
+      encoded_flavor_config_json_data = ENV['RUC_APP_FLAVORS_CONFIG_CONTENT_BASE64']
+      decoded_app_sign_cred_data = Base64.decode64(encoded_flavor_config_json_data)
+      flavor_config = JSON.parse(decoded_app_sign_cred_data)
+      variant = flavor_config[ENV['FLAVOR']]['variant']
+      sh("echo VARIANT=#{variant} >> $GITHUB_ENV")
+      artifact = flavor_config[ENV['FLAVOR']][ENV['ENVIRONMENT']]['artifact']
+      sh("echo ARTIFACT=#{artifact} >> $GITHUB_ENV")
+      encoded_app_sign_cred_data = ENV['RUC_APP_SIGN_CREDENTIALS_BASE64']
+        if encoded_app_sign_cred_data.nil?
+         UI.message("The environment variable RUC_APP_SIGN_CREDENTIALS_BASE64 is not set.")
+        else
+         decoded_app_sign_cred_data = Base64.decode64(encoded_app_sign_cred_data)
+         # Ensure decoded data is not nil before using unpack1
+         if decoded_app_sign_cred_data.nil?
+          UI.message("Failed to decode decoded_app_sign_cred_data data.")
+         else
+           decoded_json = JSON.parse(decoded_app_sign_cred_data)
+           encoded_keystore = decoded_json["#{flavor}"]["keystore_base64"]
+           # Decode the keystore and save it to $GITHUB_WORKSPACE/keystore.jks
+           decoded_keystore = Base64.decode64(encoded_keystore)
+           File.write(File.join(ENV['GITHUB_WORKSPACE'], 'keystore.jks'), decoded_keystore)
+           decoded_keystore_file = "#{ENV['GITHUB_WORKSPACE']}/keystore.jks"
+           encoded_keystore_password = decoded_json["#{flavor}"]["keystore_password"]
+           decoded_keystore_password = Base64.decode64(encoded_keystore_password)
+           encoded_keystore_alias = decoded_json["#{flavor}"]["keystore_alias"]
+           decoded_keystore_alias = Base64.decode64(encoded_keystore_alias)
+           encoded_keystore_alias_password = decoded_json["#{flavor}"]["keystore_alias_password"]
+           decoded_keystore_alias_password = Base64.decode64(encoded_keystore_alias_password)
+         end
+        end
+      build_config = ((artifact=="AAB") ? "bundle" : "assemble")
+      # Capitalize the first letter of the environment
+      capitalized_environment = environment.capitalize
+      # Get the build flavor from the inputs
+      build_flavor = "#{flavor}#{capitalized_environment}"
+
+#     UI.message("Build Configuration => project:#{project} flavor:#{flavor} environment:#{environment} variant:#{variant} artifact:#{artifact}")
+      print_build_configuration(project, flavor, environment, variant, artifact)
+
+      gradle(
+        task:"#{project}:#{build_config}",
+        build_type: variant,
+        flavor: build_flavor,
+        properties: {
+              "android.injected.signing.store.file" => decoded_keystore_file,
+              "android.injected.signing.store.password" => decoded_keystore_password,
+              "android.injected.signing.key.alias" => decoded_keystore_alias,
+              "android.injected.signing.key.password" => decoded_keystore_alias_password
+            }
+      )
+
+     if artifact == "APK"
+       build_path = lane_context[SharedValues::GRADLE_APK_OUTPUT_PATH]
+     elsif artifact == "AAB"
+       build_path = lane_context[SharedValues::GRADLE_AAB_OUTPUT_PATH]
+     end
+
+      UI.important("Generated build path => #{build_path}")
+      # Set the APK path as an environment variable for GitHub Actions
+      sh("echo chmod +x #{build_path}")
+      sh("echo BUILD_PATH=#{build_path} >> $GITHUB_ENV")
+  end
+
+  desc "🚀 Deploys the app to the specified environment."
+  lane :deploy do
+      environment = ((ENV["ENVIRONMENT"]!="") ? ENV["ENVIRONMENT"] : "")
+      apk_path = ((ENV["BUILD_PATH"]!="") ? ENV["BUILD_PATH"] : "blank")
+      artifact = ((ENV["ARTIFACT"]!="") ? ENV["ARTIFACT"] : "APK")
+      ruc__app_package_id = ((ENV["RUC_APP_PACKAGE_ID"]!="") ? ENV["RUC_APP_PACKAGE_ID"] : "blank")
+      flavor = ((ENV["FLAVOR"]!="") ? ENV["FLAVOR"] : "")
+
+      service_cred_file_path = "#{ENV['GITHUB_WORKSPACE']}/service_cred.json"
+      symbol_file_path = ((ENV["RUC_APP_SYMBOLS_FILE_PATH"]!="") ? ENV["RUC_APP_SYMBOLS_FILE_PATH"] : "")
+      mapping_file_path = ((ENV["RUC_APP_MAPPING_FILE_PATH"]!="") ? ENV["RUC_APP_MAPPING_FILE_PATH"] : "")
+      dev_release_note_file = "#{ENV['DEV_RELEASE_NOTE_FILE']}"
+      encoded_flavor_config_json_data = ENV['RUC_APP_FLAVORS_CONFIG_CONTENT_BASE64']
+      decoded_app_sign_cred_data = Base64.decode64(encoded_flavor_config_json_data)
+      flavor_config = JSON.parse(decoded_app_sign_cred_data)
+      firebase_app_id = flavor_config[ENV['FLAVOR']][ENV['ENVIRONMENT']]['firebase_app_id']
+      firebase_app_tester_group = flavor_config[ENV['FLAVOR']][ENV['ENVIRONMENT']]['firebase_tester_group']
+
+      if service_cred_file_path.nil? || service_cred_file_path.empty?
+        UI.error("service_cred_file_path file is not accessible")
+      end
+
+      UI.header("Validate the google account credentials.....")
+      validate_play_store_json_key(
+        json_key: service_cred_file_path
+      )
+
+     if environment == "dev"
+      UI.header("🚀 Deploy to Firebase 🔥")
+           firebase_app_distribution(
+             app: firebase_app_id,
+             groups: firebase_app_tester_group,
+             service_credentials_file: service_cred_file_path,
+             release_notes_file: dev_release_note_file,
+             apk_path: apk_path,
+             android_artifact_type: artifact,
+             debug: true
+           )
+     elsif environment == "prod"
+      UI.header("🚀 Deploy to PlayStore Internal Testers 🛍️.")
+           upload_to_play_store(
+             json_key: service_cred_file_path,
+             package_name: ruc__app_package_id,
+             aab: apk_path,
+             track:'internal',
+             mapping_paths: [symbol_file_path, mapping_file_path],
+             release_status:'completed'
+           )
+     end
+
+  end
+
+     def print_build_configuration(project, flavor, environment, variant, artifact)
+       table = [
+         ['Build Configuration', 'Value'],
+         ['Project', project],
+         ['Flavor', flavor],
+         ['Environment', environment],
+         ['Variant', variant],
+         ['Artifact', artifact]
+       ]
+
+       # Calculate the maximum width of the first column (keys)
+       max_key_length = table.map { |row| row[0].length }.max
+
+       # Calculate the maximum width of the second column (data)
+       max_data_length = table.map { |row| row[1].length }.max
+
+       # Display the table-like output with border lines
+       UI.success('+' + '-' * (max_key_length + 2) + '+' + '-' * (max_data_length + 2) + '+')
+       table.each do |row|
+         key, value = row
+         UI.success('| ' + key.ljust(max_key_length) + '  ' + value.ljust(max_data_length) + ' |')
+       end
+       UI.success('+' + '-' * (max_key_length + 2) + '+' + '-' * (max_data_length + 2) + '+')
+     end
+
+     def print_app_info(pkgName, versionCode, versionNum)
+       table = [
+         ['App Info', 'Value'],
+         ['Package Name', pkgName],
+         ['Version Code', versionCode],
+         ['Version Number', versionNum]
+       ]
+
+       # Calculate the maximum width of the first column (keys)
+       max_key_length = table.map { |row| row[0].length }.max
+
+       # Calculate the maximum width of the second column (data)
+       max_data_length = table.map { |row| row[1].length }.max
+
+       # Display the table-like output with border lines
+       UI.success('+' + '-' * (max_key_length + 2) + '+' + '-' * (max_data_length + 2) + '+')
+       table.each do |row|
+         key, value = row
+         UI.success('| ' + key.ljust(max_key_length) + '  ' + value.ljust(max_data_length) + ' |')
+       end
+       UI.success('+' + '-' * (max_key_length + 2) + '+' + '-' * (max_data_length + 2) + '+')
+     end
+end

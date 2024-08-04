@@ -1,0 +1,44 @@
+name: Deploy
+description: "This Action will triggered the fastlane lane to deploy app."
+
+runs:
+  using: "composite"
+  steps:
+    - name: ✨ Action triggered for ${{ env.FLAVOR }} App.
+      shell: bash
+      run: |
+        echo "Action triggered for flavor is ${{ env.FLAVOR }}"
+
+    - name: 🚀 Deploy ${{ env.APP_NAME }} App.
+      shell: bash
+      run: |
+        bundle exec fastlane deploy
+
+    - name: 🏷️ Create a Release Tag.
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        tag="${{ env.APP_NAME }}_v${{ env.APP_VERSION_NAME }}"
+        lowercaseTag=${tag,,} # convert to lowercase
+        finalTag=${lowercaseTag// /_} # replace spaces with underscores
+        gh release create $finalTag ${{ env.BUILD_PATH }} \
+              --repo="https://github.com/${{github.repository}}" \
+              --title="${{ env.APP_NAME }} v${{ env.APP_VERSION_NAME }}" \
+              --notes-file release_note.md
+        gh release upload $finalTag ${{ env.APP_SYMBOLS_FILE_PATH }}
+        gh release upload $finalTag ${{ env.APP_MAPPING_FILE_PATH }}
+
+    - name: 🧹 Clean up resources.
+      shell: bash
+      run: |
+        # Clean up the generated file after usage
+        if [ -f "${{ github.workspace }}/keystore.jks" ]; then
+          rm -f ${{ github.workspace }}/keystore.jks
+        fi
+        if [ ! -z "${{ env.APP_SYMBOLS_FILE_PATH }}" ] && [ -f "${{ env.APP_SYMBOLS_FILE_PATH }}" ]; then
+          rm -f ${{ env.APP_SYMBOLS_FILE_PATH }}
+        fi
+        if [ ! -z "${{ env.APP_MAPPING_FILE_PATH }}" ] && [ -f "${{ env.APP_MAPPING_FILE_PATH }}" ]; then
+          rm -f ${{ env.APP_MAPPING_FILE_PATH }}
+        fi
