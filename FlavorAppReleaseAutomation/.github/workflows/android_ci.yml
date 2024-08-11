@@ -1,0 +1,69 @@
+name: Android CI
+run-name: ${{ github.actor }} - ${{ github.event.head_commit.message }}
+on:
+  push:
+    branches:
+      - dev
+      - main
+env:
+  ENVIRONMENT: ''
+jobs:
+  identify_environment:
+    runs-on: ubuntu-latest
+    outputs:
+      output1: ${{ steps.set_environment.outputs.environment }}
+    steps:
+      - name: Identify Environment
+        id: set_environment
+        run: |
+          if [[ "${{ github.ref }}" == *"dev"* ]]; then
+            echo "Environment is dev"
+            echo "environment=dev" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref }}" == *"main"* ]]; then
+            echo "Environment is prod"
+            echo "environment=prod" >> "$GITHUB_OUTPUT"
+          else
+            echo "Environment is not defined"
+            echo "environment= " >> "$GITHUB_OUTPUT"
+          fi
+  build_deploy:
+    needs: identify_environment
+    runs-on: ubuntu-latest
+    environment: ${{ needs.identify_environment.outputs.output1 }}
+    steps:
+      - name: ⚙️ Executing in the ${{ needs.identify_environment.outputs.output1 }} environment.
+        run: |
+          if [[ -z "${{ needs.identify_environment.outputs.output1 }}" ]]; then
+            echo "The ENVIRONMENT is not set. Stopping the workflow..."
+            exit 1
+          else
+            temp_env=${{ needs.identify_environment.outputs.output1 }}
+            echo "ENVIRONMENT=$temp_env" >> "$GITHUB_ENV"
+            echo "The pipeline is running under the $temp_env environment."
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🛠️ Set environment variables
+        run: |
+          echo "BUILD_AND_DEPLOY_FOR_FLAVORA=${{ vars.BUILD_AND_DEPLOY_FOR_FLAVORA }}" >> "$GITHUB_ENV"
+          echo "BUILD_AND_DEPLOY_FOR_FLAVORB=${{ vars.BUILD_AND_DEPLOY_FOR_FLAVORB }}" >> "$GITHUB_ENV"
+          echo "BUILD_AND_DEPLOY_FOR_FLAVORC=${{ vars.BUILD_AND_DEPLOY_FOR_FLAVORC }}" >> "$GITHUB_ENV"
+          echo "APP_SIGN_CREDENTIALS_BASE64=${{ secrets.APP_SIGN_CREDENTIALS_BASE64 }}" >> "$GITHUB_ENV"
+          echo "APP_FLAVORS_CONFIG_CONTENT_BASE64=${{ secrets.APP_FLAVORS_CONFIG_CONTENT_BASE64 }}" >> "$GITHUB_ENV"
+          printf '%s' "${{ secrets.SERVICE_CREDENTIALS_CONTENT_BASE64 }}" | base64 --decode > ${{ github.workspace }}/service_cred.json
+          echo "PROJECT_NAME=$(./gradlew -q app:printProjectName)" >> $GITHUB_ENV
+
+      - name: 💻 Setup System
+        uses: ./.github/actions/setup
+
+      - name: 🛠️ Build And Deploy Flavor App.
+        uses: ./.github/actions/flavors
+
+      - name: 🧹 Clean up resources.
+        shell: bash
+        run: |
+          # Clean up the generated file after usage
+          rm ${{ github.workspace }}/service_cred.json

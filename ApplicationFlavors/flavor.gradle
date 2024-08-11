@@ -1,0 +1,141 @@
+// Define the flavor configurations for different clients and environments
+def flavorConfig = [
+        [
+                name        : 'flavorA',
+                environments: [
+                        // Configuration for Development environment
+                        [name: 'Dev', app_id_suffix: 'flavorA.dev', 'url': '"https://api.dev.com"'],
+                        // Configuration for Production environment
+                        [name: 'Prod', app_id_suffix: 'flavorA', 'url': '"https://api.com"']
+                ]
+        ],
+        [
+                name        : 'flavorB',
+                environments: [
+                        [name: 'Dev', app_id_suffix: 'flavorB.dev', 'url': '"https://api.dev.com"'],
+                        [name: 'Prod', app_id_suffix: 'flavorB', 'url': '"https://api.com"']
+                ]
+        ],
+        [
+                name        : 'flavorC',
+                environments: [
+                        [name: 'Dev', app_id_suffix: 'flavorC.dev', 'url': '"https://api.dev.com"'],
+                        [name: 'Prod', app_id_suffix: 'flavorC', 'url': '"https://api.com"']
+                ]
+        ],
+]
+
+// Load signing properties from local.properties file
+Properties signProps = new Properties()
+def propertiesFile = project.rootProject.file('local.properties')
+if (propertiesFile.exists()) {
+    signProps.load(propertiesFile.newDataInputStream())
+}
+
+// Load versioning properties from version.properties file
+Properties versionProps = new Properties()
+def versionPropsFile = rootProject.file('version.properties')
+if (versionPropsFile.exists()) {
+    versionProps.load(versionPropsFile.newDataInputStream())
+} else {
+    // Handle the case where the version.properties file doesn't exist
+    println "Version properties file not found: ${versionPropsFile.path}"
+}
+
+android {
+    // Iterate over each flavor configuration to set up signing configurations
+    flavorConfig.each { agency ->
+        def flavorName = agency['name']
+        signingConfigs.create(flavorName) {
+            // Set up signing properties based on the flavor name
+            storeFile file(signProps.getProperty("${flavorName}_keystore_path", 'blank'))
+            keyAlias signProps.getProperty("${flavorName}_key_alias", 'blank')
+            storePassword signProps.getProperty("${flavorName}_key_store_password", 'blank')
+            keyPassword signProps.getProperty("${flavorName}_key_password", 'blank')
+        }
+    }
+
+    // Set the flavor dimension for this project
+    setFlavorDimensions(["flavors"])
+
+    // Configure each product flavor and its environments
+    flavorConfig.each { agency ->
+        def flavorName = agency['name']
+        def environments = agency['environments']
+
+        // Iterate through environments (e.g., Dev, Prod)
+        environments.each { env ->
+            def envName = env['name']
+            def app_id_suffix = env['app_id_suffix']
+            String server_url = env['url']
+
+            // Generate keys for version code and name
+            def envNameLowerCase = envName.toLowerCase()
+            def codeKey = "${flavorName}_${envNameLowerCase}_version_code"
+            def nameKey = "${flavorName}_${envNameLowerCase}_version_name"
+
+            // Retrieve version code and name from properties
+            def _versionCode = versionProps.getProperty(codeKey)?.toInteger()
+            def _versionName = versionProps.getProperty(nameKey)
+
+            // Combine flavor and environment names to create a unique product flavor name
+            String productFlavorName = "$flavorName$envName"
+
+            // Create the product flavor and configure it
+            productFlavors.create("$productFlavorName") {
+                // Assign the dimension to this flavor
+                dimension 'flavors'
+
+                // Set version code and version name for this flavor
+                versionCode _versionCode
+                versionName _versionName
+
+                // Add application ID suffix based on the environment
+                if (!app_id_suffix.isEmpty()) {
+                    applicationIdSuffix = ".$app_id_suffix"
+                }
+
+                // Set signing configuration based on properties file
+                if (propertiesFile.exists()) {
+                    signingConfig signingConfigs."$flavorName"
+                }
+
+                // Add the server URL to BuildConfig so it can be accessed in the app code
+                buildConfigField "String", "SERVER_URL", server_url
+
+                // Set a flag in BuildConfig to indicate whether this is a development environment
+                if (envName == "Dev") {
+                    buildConfigField "Boolean", "IS_DEV_ENV", 'true'
+                } else {
+                    buildConfigField "Boolean", "IS_DEV_ENV", 'false'
+                }
+
+                // Print configuration details for debugging
+                println "Suffix: $applicationIdSuffix, Version [code: $_versionCode, Name: $_versionName]," +
+                        " BuildConfig:[URL: $server_url, FLAVOR_ID: $flavorName, ENV: $envName]"
+            }
+        }
+    }
+
+    // Configure source sets based on product flavors, adjusting resource directories if necessary
+    if (project.name.containsIgnoreCase("my-project")) {
+        productFlavors.configureEach { flavor ->
+            // Use a regex pattern to extract the flavor and environment names
+            def matcher = flavor.name =~ /^(.*?)(Dev|Prod)$/
+            def (flavorName, environmentName) = matcher.find() ? [matcher.group(1), matcher.group(2)] : [flavor.name, '']
+            println "Flavor Name: $flavorName, Environment Name: $environmentName"
+
+            // Adjust source set directories for production and development environments
+            if (flavor.name.endsWith('Prod')) {
+                sourceSets.named(flavor.name) {
+                    res.srcDirs = ['src/' + flavorName + '/res']
+                }
+            }
+            if (flavor.name.endsWith('Dev')) {
+                sourceSets.named(flavor.name) {
+                    res.srcDirs = ['src/' + flavor.name + '/res']
+                }
+            }
+        }
+    }
+}

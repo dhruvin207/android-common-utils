@@ -1,0 +1,79 @@
+name: Setup System
+description: "Setup environment system"
+runs:
+  using: "composite"
+  steps:
+    - name: ☕ Install JAVA
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'oracle'
+        java-version: 17
+        cache: 'gradle'
+        cache-dependency-path: | # optional
+          **/*.gradle
+          **/*.gradle.kts
+          **/gradlew
+          **/gradlew.bat
+          **/gradle-wrapper.jar
+          **/gradle-wrapper.properties
+
+    - name: 💎 Install Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.3'
+        bundler-cache: true
+
+    # SetUp Android SDK in VM.
+    # - name: Setup Android SDK
+    #   uses: android-actions/setup-android@v2
+
+    # Install the bundler & Fastlane (Create environment for ruby to avoid dependency hell and manage the dependencies versions)
+    #    - name: Install bundler
+    #      shell: bash
+    #      run: |
+    #        cd geotoll-android-apps
+    #        gem install bundler:2.4.13
+    #        bundle config path vendor/bundle
+
+    - name: ⬇️ Download latest BundleTool version
+      shell: bash
+      run: |
+        # Get the latest release version from GitHub API
+        LATEST_VERSION=$(curl -s "https://api.github.com/repos/google/bundletool/releases/latest" | jq -r .tag_name)
+        wget "https://github.com/google/bundletool/releases/download/${LATEST_VERSION}/bundletool-all-${LATEST_VERSION}.jar" -O bundletool.jar
+        pwd
+        ls -ltrh
+        # Make the JAR file executable
+        chmod +x bundletool.jar
+
+    # Update the Fastlane
+    - name: ⬆️ Update Fastlane
+      shell: bash
+      run: |
+        gem install fastlane   
+        bundle update fastlane
+
+    # Install the Firebase app distribution plugin with fastlane
+    - name: 🔌 Install Firebase app distribution plugin
+      shell: bash
+      run: |
+        bundle exec fastlane add_plugin firebase_app_distribution
+        bundle exec fastlane update_plugins
+
+    - name: 🔒 Grant execute permission for gradlew
+      shell: bash
+      run: |
+        chmod +x gradlew
+
+    - name: 🔌 Install aapt
+      shell: bash
+      run: sudo apt-get install aapt
+
+    # Cache the bundletool.jar and Bundler's cache
+    - name: Cache BundleTool and Bundler
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ github.workspace }}/bundletool.jar
+        key: bundletool-cache-${{ runner.os }}
+        restore-keys: bundletool-cache-${{ runner.os }}

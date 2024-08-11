@@ -1,0 +1,70 @@
+name: Upload
+description: "This Action will collect details and upload build to Github Artifact."
+runs:
+  using: "composite"
+  steps:
+    - name: ✨ Action triggered for ${{ env.FLAVOR }} App.
+      shell: bash
+      run: |
+        echo "Action triggered for ${{ env.FLAVOR }} flavor is ${{ env.FLAVOR }}"
+
+    - name: 📂 Create a zip file for Native Symbols.
+      shell: bash
+      run: |
+        flavor=${{ env.FLAVOR }}
+        environment=${{ env.ENVIRONMENT }}
+        variant=${{ env.VARIANT }}
+        cd build/intermediates/merged_native_libs/${flavor}${environment^}${variant^}/merge${flavor^}${environment^}${variant^}NativeLibs/out/lib/
+        zip -r symbols.zip *
+        echo "APP_SYMBOLS_FILE_PATH=build/intermediates/merged_native_libs/${flavor}${environment^}${variant^}/merge${flavor^}${environment^}${variant^}NativeLibs/out/lib/symbols.zip" >> "$GITHUB_ENV"
+        echo "APP_MAPPING_FILE_PATH=build/outputs/mapping/${flavor}${environment^}${variant^}/mapping.txt" >> "$GITHUB_ENV"
+        pwd
+        ls -la
+
+    - name: 📝 Extract Build Info.
+      shell: bash
+      run: |
+        # Check if it's an AAB file and use bundletool to extract package information
+        if [[ -e "${{ env.BUILD_PATH }}" && "${{ env.BUILD_PATH }}" == *".aab" ]]; then
+          APPLICATION_ID=$(java -jar bundletool.jar dump manifest --bundle="${{ env.BUILD_PATH }}" | grep -o 'package=\"[^\"]*\"' | awk -F\" '{print $2}')
+          echo "Application ID: $APPLICATION_ID"
+          echo "APP_PACKAGE_ID=$APPLICATION_ID" >> "$GITHUB_ENV"
+          # Extract version name from AAB (if available)
+          VERSION_NAME=$(java -jar bundletool.jar dump manifest --bundle="${{ env.BUILD_PATH }}" | grep -o 'versionName=\"[^\"]*\"' | awk -F\" '{print $2}')
+          echo "Version Name: $VERSION_NAME"
+          echo "APP_VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+
+          # Extract the base APK from the AAB file
+          java -jar bundletool.jar build-apks --bundle="${{ env.BUILD_PATH }}" --output="${{ env.FLAVOR }}.apks" --mode=universal
+          unzip -o "${{ env.FLAVOR }}.apks" -d output
+  
+          # Use aapt to get the application name from the base APK
+          APPLICATION_NAME=$(aapt dump badging output/universal.apk | awk -F"'" '/application-label:/ {for (i=2; i<=NF; i++) printf $i""; print ""}')
+          echo "Application Name: $APPLICATION_NAME"
+          echo "APP_NAME=$APPLICATION_NAME" >> "$GITHUB_ENV"
+
+        # If it's an APK file, use aapt to extract package information
+        elif [[ -e "${{ env.BUILD_PATH }}" && "${{ env.BUILD_PATH }}" == *".apk" ]]; then
+          package_id_info=$(aapt dump badging "${{ env.BUILD_PATH }}" | grep package:\ name)
+          package_id=$(echo "$package_id_info" | awk -F"'" '{print $2}')
+          echo "Application ID: $package_id"
+          echo "APP_PACKAGE_ID=$package_id" >> "$GITHUB_ENV"
+          # Extract version name from APK (if available)
+          VERSION_NAME=$(aapt dump badging "${{ env.BUILD_PATH }}" | awk '/versionName/ {print $4}' | sed s/versionName=//g | tr -d "'")
+          echo "Version Name: $VERSION_NAME"
+          echo "APP_VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+        
+          # Use aapt to get the application name from the base APK
+          APPLICATION_NAME=$(aapt dump badging "${{ env.BUILD_PATH }}" | awk -F"'" '/application-label:/ {for (i=2; i<=NF; i++) printf $i""; print ""}')
+          echo "Application Name: $APPLICATION_NAME"
+          echo "APP_NAME=$APPLICATION_NAME" >> "$GITHUB_ENV"
+        else
+          echo "Unsupported file format. Exiting."
+          exit 1
+        fi
+
+    - name: 📦 Upload ${{ env.RUC_APP_NAME }} Build to the Artifact.
+      uses: actions/upload-artifact@v4
+      with:
+        name: "${{ env.FLAVOR }}${{ env.ENVIRONMENT }}_v${{ env.APP_VERSION_NAME }}"
+        path: ${{ env.BUILD_PATH }}
